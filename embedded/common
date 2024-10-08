@@ -72,13 +72,13 @@ if [ -z $NANO_NAME ]; then
 	echo "NANO_NAME not defined. Use foo.cfg instead."
 fi
 
-NANO_SLICE_FAT_SIZE=32m
+NANO_SLICE_FAT_SIZE=50m
 NANO_SLICE_CFG_SIZE=32m
 
-NANO_BOOT2CFG="-h -S115200"
+NANO_BOOT2CFG=""
 
-NANO_RAM_ETCSIZE=8192
-NANO_RAM_TMPVARSIZE=8192
+NANO_RAM_ETCSIZE=10240
+NANO_RAM_TMPVARSIZE=10240
 NANO_IMAGES=2
 
 NANO_PMAKE="make -j $(sysctl -n hw.ncpu)"
@@ -191,129 +191,66 @@ create_diskimage_mbr ( ) (
 	pprint 3 "image in: ${NANO_DISKIMGDIR}/_.disk.image.${NANO_NAME}${fmt}"
 
 	(
-	local extra i sz fmt fmtarg bootmbr bootbsd skiparg
 	set -o xtrace
-	# Tell mtools not to be too picky
-	export MTOOLS_SKIP_CHECK=1
 
-	[ -z ${NANO_DISKIMAGE_FORMAT} ] || fmtarg="-f ${NANO_DISKIMAGE_FORMAT}"
-	[ -z ${NANO_DISKIMAGE_FORMAT} ] || fmt=".${NANO_DISKIMAGE_FORMAT}"
-	bootmbr=${NANO_BOOT_MBR:+-b ${NANO_BOOT_MBR}}
-	bootbsd=${NANO_BOOT_BSD:+-b ${NANO_BOOT_BSD}}
-	skiparg=${NANO_MBR_FIRST_SKIP:+-S ${NANO_MBR_FIRST_SKIP}}
-
-	for i in s1 s2 s3 s4 p1 p2 p3 p4 p5 empty; do
-		rm -fr ${NANO_LOG}/_.${i}*
-	done
+	# create blank file for md
+	out=${NANO_DISKIMGDIR}/_.disk.image.${NANO_NAME}${fmt}
+	rm -f ${out}
+	[ -n "${NANO_IMG_SIZE}" ] || NANO_IMG_SIZE=2000
+	truncate -s ${NANO_IMG_SIZE}M ${out}
+	mddev=$(mdconfig -a -f ${out})
+	gpart create -s ${NANO_DISK_SCHEME} ${mddev}
 
 	# Populate the FAT partition, if needed
 	if [ -n "${NANO_SLICE_FAT}" ]; then
-		echo Creating MSDOS partition for kernel
-		newfs_msdos -C ${NANO_SLICE_FAT_SIZE} -F 16 -L ${NANO_NAME} \
-			${NANO_LOG}/_.${NANO_SLICE_FAT}
+		local FAT_SIZE="${NANO_SLICE_FAT_SIZE} -b 1m"
+		local FAT_TYPE="16"
+		gpart add -t '!12' -a 512k -s ${FAT_SIZE} ${mddev}
+		gpart set -a active -i 1 ${mddev}
+		newfs_msdos -L efi -F ${FAT_TYPE} /dev/${mddev}${NANO_SLICE_FAT}
 		if [ -d ${NANO_FAT_DIR} ]; then
-			# Need to copy files from ${NANO_FATDIR} with mtools, or use
-			# makefs -t msdos once that's supported
-			mcopy -s -i ${NANO_LOG}/_.${NANO_SLICE_FAT} ${NANO_FAT_DIR}/* ::
+			local FAT_WORK_DIR=${NANO_LOG}/_.fat_work
+			mkdir -p ${FAT_WORK_DIR}
+			mount -t msdosfs /dev/${mddev}${NANO_SLICE_FAT} ${FAT_WORK_DIR}
+			(tar -cf - -C ${NANO_FAT_DIR} . | tar -xf - -C ${FAT_WORK_DIR}) || true
+			umount /dev/${mddev}s1
+			rmdir ${FAT_WORK_DIR}
 		fi
 	fi
 
-	# Populate the Powerpc boot image, if needed
-	if [ "${NANO_LAYOUT}" = powerpc64-ibm ]; then
-		dd if=${NANO_WORLDDIR}/boot/boot1.elf of=${NANO_LOG}/_.s1 bs=800k count=1 conv=sync
+	# Populate the /cfg partition, empty if none given
+	if [ -n "${NANO_SLICE_CFG}" ]; then
+		gpart add -t freebsd -s ${NANO_SLICE_CFG_SIZE} ${mddev}
+		gpart create -s bsd ${mddev}${NANO_SLICE_CFG}
+		newfs -U -L cfg /dev/${mddev}${NANO_SLICE_CFG}
+		if [ -n "${NANO_CFGDIR}" ]; then
+			local CFG_WORK_DIR=${NANO_LOG}/_.cfg_work
+			mkdir -p ${CFG_WORK_DIR}
+			mount /dev/${mddev}${NANO_SLICE_CFG} ${CFG_WORK_DIR}
+			tar -cf - -C ${NANO_CFG_DIR} . | tar -xf - -C ${CFG_WORK_DIR}
+			umount /dev/${mddev}${NANO_SLICE_CFG}
+			rmdir ${CFG_WORK_DIR}
+		fi
 	fi
 
 	# Populate the / partition, and place it into a slice with a
 	# bsd label
-	[ -z ${NANO_NOPRIV_BUILD} ] || extra="-F ${NANO_METALOG}"
-	sz=${NANO_SLICE_ROOT_SIZE:+-s ${NANO_SLICE_ROOT_SIZE}}
-	eval "${NANO_MAKEFS_UFS}" ${extra} $sz "${NANO_LOG}/_.${NANO_ROOT}" \
-		"${NANO_WORLDDIR}"
-	case ${NANO_DISK_SCHEME} in
-	mbr)
-		mkimg -s bsd ${bootbsd} -p freebsd-ufs:=${NANO_LOG}/_.${NANO_ROOT} \
-			-o ${NANO_LOG}/_.${NANO_SLICE_ROOT}
-		eval $NANO_SLICE_CFG=freebsd
-		eval $NANO_SLICE_ROOT=freebsd
-		;;
-	gpt)
-		eval $NANO_SLICE_CFG=freebsd-ufs
-		eval $NANO_SLICE_ROOT=freebsd-ufs
-		;;
-	esac
-
-	# Populate the /cfg partition, empty if none given
-	if [ -z "${NANO_CFGDIR}" ]; then
-		echo "Faking cfg dir, it's empty"
-		NANO_CFGDIR=${NANO_LOG}/_.empty
-		mkdir -p ${NANO_CFGDIR}
-	fi
-	# XXX -F cfg-mtree
-	eval "${NANO_MAKEFS_UFS}" -s ${NANO_SLICE_CFG_SIZE} \
-		"${NANO_LOG}/_.${NANO_SLICE_CFG}" "${NANO_CFGDIR}"
-
-	# data slice not supported since we need the part for FAT for 
-	# booting
-
-	# Now shuffle all the slices together into the proper layout
-	if [ -n "$NANO_SLICE_FAT" ]; then
-		eval $NANO_SLICE_FAT=fat16b
+	if [ -n "${NANO_SLICE_ROOT}" ]; then
+		gpart add -t freebsd ${mddev}
+		gpart create -s bsd ${mddev}${NANO_SLICE_ROOT}
+		gpart add -t freebsd-ufs -a 64k -b 64k ${mddev}${NANO_SLICE_ROOT}
+		newfs -U -L rootfs /dev/${mddev}${NANO_SLICE_ROOT}a
+		local ROOT_WORK_DIR=${NANO_LOG}/_.root
+		mkdir -p ${ROOT_WORK_DIR}
+		mount /dev/${mddev}${NANO_SLICE_ROOT}a ${ROOT_WORK_DIR}
+		tar -cf - -C ${NANO_WORLDDIR} . | tar -xf - -C ${ROOT_WORK_DIR}
+		umount /dev/${mddev}${NANO_SLICE_ROOT}a
+		rmdir ${ROOT_WORK_DIR}
 	fi
 
-	out=${NANO_DISKIMGDIR}/_.disk.image.${NANO_NAME}${fmt}
-	# below depends on https://reviews.freebsd.org/D4403 not yet in the tree
-	# but there's problems: it marks all partitions as active, so you have to
-	# boot off partition 3 or 2 by hand if you're playing around with this WIP
-	case ${NANO_LAYOUT} in
-	std-embedded)
-		mkimg -a 3 ${skiparg} ${fmtarg} ${bootmbr} -s mbr -p ${s1}:=${NANO_LOG}/_.s1 \
-			-p ${s2}:=${NANO_LOG}/_.s2 \
-			-p ${s3}:=${NANO_LOG}/_.s3 \
-			-o ${out}
-		;;
-	std-x86)
-		# s3 is cfg, s1 is /, s2 is other / (s2 is created in first boot script)
-		mkimg -a 1 ${fmtarg} ${bootmbr} -s mbr -p ${s1}:=${NANO_LOG}/_.s1 \
-			-p- \
-			-p ${s3}:=${NANO_LOG}/_.s3 \
-			-o ${out}
+	mdconfig -d -u ${mddev}
 
-
-		;;
-	std-uefi)
-		# s1 is boot, s2 is cfg, s3 is /, not sure how to make that
-		# boot (marked as active) with mkimg yet
-		mkimg -a 2 ${fmtarg} ${bootmbr} -s mbr \
-			-p efi:=${NANO_WORLDDIR}/boot/efiboot.img \
-			-p ${s2}:=${NANO_LOG}/_.s2 \
-			-p ${s3}:=${NANO_LOG}/_.s3 \
-			-o ${out}
-		;;
-	std-uefi-bios)
-		# p1 is boot for uefi, p2 is boot for gpt, p3 is cfg, p4 is /
-		# and p5 is alt-root (after resize)
-		mkimg -a 2 ${fmtarg} ${bootmbr} -s gpt \
-			-p efi:=${NANO_WORLDDIR}/boot/efiboot.img \
-			-p freebsd-boot:=${NANO_WORLDDIR}/boot/gptboot \
-			-p ${p3}:=${NANO_LOG}/_.p3 \
-			-p ${p4}:=${NANO_LOG}/_.p4 \
-			-o ${out}
-		;;
-	powerpc64-ibm)
-		# A lie to make the boot loader work, it boots the first BSD partition
-		# it finds, regardless of the active flag.
-		s2=fat16b
-		# boot image is on a special partition, ala std-embedded, but that
-		# partition isn't FAT with special files, but a copy of the boot
-		# loader itself.
-		mkimg -a 1 ${fmtarg} -s mbr -p prepboot:=${NANO_LOG}/_.s1 \
-			-p ${s2}:=${NANO_LOG}/_.s2 \
-			-p ${s3}:=${NANO_LOG}/_.s3a \
-			-o ${out}
-		;;
-	esac
-	rm -f ${out}.xz
-	xz -9 --keep ${out}
+	#xz -9 --keep ${out} # time consuming
 	) > ${NANO_LOG}/_.di 2>&1
 )
 
@@ -379,16 +316,36 @@ typical_embedded ( ) (
 	# so now's a good time.
 
 	local rc=${NANO_WORLDDIR}/etc/rc.conf
+	local loader_conf=${NANO_WORLDDIR}/boot/loader.conf
 
-	echo "hostname=nanobsd-${NANO_NAME}" > $rc
-	echo "growfs_enable=YES" >> $rc
-	echo "growfs_type=nanobsd-pingpong" >> $rc
-	echo "ntpdate_enable=YES" >> $rc
-	echo "ifconfig_DEFAULT=DHCP" >> $rc
-	echo "ntpdate_hosts='0.freebsd.pool.ntp.org 1.freebsd.pool.ntp.org'" >> $rc
-	# Make sure that firstboot scripts run so growfs works.
-	# Note: still some issues remvoing this XXX
+	cat > $rc << RC_CONF
+hostname="nanobsd-${NANO_NAME}"
+ntpdate_enable="YES"
+ifconfig_DEFAULT="DHCP"
+ntpdate_hosts="0.freebsd.pool.ntp.org 1.freebsd.pool.ntp.org"
+RC_CONF
+	if [ ${DO_ENABLE_SSHD} ]; then
+		echo 'sshd_enable="YES"' >> $rc
+	fi
 	touch ${NANO_WORLDDIR}/firstboot
+	rm -f ${NANO_WORLDDIR}/boot.config
+	cat > $loader_conf <<LOADER_CONF
+# Configure USB OTG; see usb_template(4).
+hw.usb.template=3
+umodem_load="YES"
+# Multiple console (serial+efi gop) enabled.
+boot_multicons="YES"
+boot_serial="YES"
+# Disable the beastie menu and color
+beastie_disable="YES"
+loader_color="NO"
+LOADER_CONF
+	pw -R ${NANO_WORLDDIR} usermod root -w yes
+	if [ -n "${NANO_TIME_ZONE}" ]; then
+		tzsetup -C ${NANO_WORLDDIR} ${NANO_TIME_ZONE}
+	fi
+
+	rm -fr ${NANO_WORLDDIR}/var/db/etcupdate
 )
 customize_cmd typical_embedded
 
@@ -412,7 +369,7 @@ fix_pkg ( ) (
 	echo "./pkg/tmp type=dir uname=root gname=wheel mode=0755"
 	) >> ${NANO_METALOG}
 )
-customize_cmd fix_pkg
+#customize_cmd fix_pkg
 
 save_build ( ) (
 	VERSION_FILE=${NANO_WORLDDIR}/etc/version
@@ -435,7 +392,7 @@ shrink_md_fbsize ( ) (
 )
 customize_cmd shrink_md_fbsize
 
-customize_cmd cust_comconsole
+#customize_cmd cust_comconsole
 
 dos_boot_part ( ) (
 	local d=/usr/local/share/u-boot/${NANO_BOOT_PKG}
@@ -456,6 +413,37 @@ dos_boot_part ( ) (
 	cp ${NANO_WORLDDIR}/boot/dtb/*.dtb .
 )
 
+dos_boot_part_rpi4 ( ) (
+	local d1=/usr/local/share/u-boot/${NANO_BOOT_PKG}
+	local d2=/usr/local/share/${NANO_RPI_FIRMWARE_PKG}
+	local f=${NANO_FAT_DIR}
+
+	# For now, just copy all the files.
+	rm -rf $f
+	mkdir $f
+	chdir $f
+	for ext in bin broadcom dat dtb elf;
+	do
+		cp ${d2}/*\.$ext .
+	done
+        mkdir overlays
+	for f in disable-bt.dtbo mmc.dtbo pwm.dtbo
+	do
+		cp ${d2}/overlays/$f overlays/$f
+	done
+	cp ${d2}/config_arm64.txt config.txt
+        cp ${d1}/u-boot.bin .
+	mkdir -p EFI/BOOT/
+	cp ${NANO_WORLDDIR}/boot/loader_lua.efi EFI/BOOT/bootaa64.efi
+
+	# We have to touch the saveenv file
+	touch uEnv.txt
+
+	# Now we need to copy over dtb files from the build.
+	mkdir dtb
+	cp -R ${NANO_WORLDDIR}/boot/dtb/ dtb
+)
+
 if [ -n "$NANO_BOOT_PKG" ]; then
 	d=/usr/local/share/u-boot/${NANO_BOOT_PKG}
 	if [ ! -d ${d} ]; then
@@ -466,7 +454,15 @@ if [ -n "$NANO_BOOT_PKG" ]; then
 		echo mtools not installed. Sadly, we gotta have it.
 		exit 1
 	fi
-	customize_cmd dos_boot_part
+        if [ "$NANO_NAME" == rpi4 ]; then
+		if [ -z "NANO_RPI_FIRMWARE_PKG" ]; then
+			echo "rpi_firmware not installed, abort."
+			exit 1
+		fi
+	        customize_cmd dos_boot_part_rpi4
+        else
+	        customize_cmd dos_boot_part
+        fi
 fi
 
 product_custom ( ) (
