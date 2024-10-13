@@ -1,5 +1,6 @@
 #!/bin/sh
 #
+# Copyright (c) 2024 prozorecJP
 # Copyright (c) 2005 Poul-Henning Kamp.
 # All rights reserved.
 #
@@ -582,6 +583,8 @@ setup_nanobsd_etc ( ) (
 
 	# save config file for scripts
 	echo "NANO_DRIVE=${NANO_DRIVE}" > etc/nanobsd.conf
+        echo "NANO_SLICE_ROOT=${NANO_SLICE_ROOT}" >> etc/nanobsd.conf
+        echo "NANO_SLICE_ALTROOT=${NANO_SLICE_ALTROOT}" >> etc/nanobsd.conf
 
 	echo "/dev/${NANO_DRIVE}${NANO_ROOT} / ufs ro 1 1" > etc/fstab
 	echo "/dev/${NANO_DRIVE}${NANO_SLICE_CFG} /cfg ufs rw,noauto 2 2" >> etc/fstab
