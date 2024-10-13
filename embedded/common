@@ -1,5 +1,6 @@
 
 #-
+# Copyright (c) 2024 prozorecJP
 # Copyright (c) 2015 M. Warner Losh <imp@FreeBSD.org>
 # Copyright (c) 2010-2011 iXsystems, Inc.
 #
@@ -195,7 +196,7 @@ create_diskimage_mbr ( ) (
 
 	# create blank file for md
 	out=${NANO_DISKIMGDIR}/_.disk.image.${NANO_NAME}${fmt}
-	rm -f ${out}
+	rm -f ${out} ${NANO_LOG}/_.${NANO_ROOT}
 	[ -n "${NANO_IMG_SIZE}" ] || NANO_IMG_SIZE=2000
 	truncate -s ${NANO_IMG_SIZE}M ${out}
 	mddev=$(mdconfig -a -f ${out})
@@ -239,13 +240,14 @@ create_diskimage_mbr ( ) (
 		gpart add -t freebsd ${mddev}
 		gpart create -s bsd ${mddev}${NANO_SLICE_ROOT}
 		gpart add -t freebsd-ufs -a 64k -b 64k ${mddev}${NANO_SLICE_ROOT}
-		newfs -U -L rootfs /dev/${mddev}${NANO_SLICE_ROOT}a
+		newfs -U -L rootfs /dev/${mddev}${NANO_ROOT}
 		local ROOT_WORK_DIR=${NANO_LOG}/_.root
 		mkdir -p ${ROOT_WORK_DIR}
-		mount /dev/${mddev}${NANO_SLICE_ROOT}a ${ROOT_WORK_DIR}
+		mount /dev/${mddev}${NANO_ROOT} ${ROOT_WORK_DIR}
 		tar -cf - -C ${NANO_WORLDDIR} . | tar -xf - -C ${ROOT_WORK_DIR}
-		umount /dev/${mddev}${NANO_SLICE_ROOT}a
+		umount /dev/${mddev}${NANO_ROOT}
 		rmdir ${ROOT_WORK_DIR}
+		dd if=/dev/${mddev}${NANO_ROOT} of=${NANO_LOG}/_.${NANO_ROOT} bs=32m
 	fi
 
 	mdconfig -d -u ${mddev}
@@ -435,6 +437,8 @@ dos_boot_part_rpi4 ( ) (
         cp ${d1}/u-boot.bin .
 	mkdir -p EFI/BOOT/
 	cp ${NANO_WORLDDIR}/boot/loader_lua.efi EFI/BOOT/bootaa64.efi
+	mkdir -p EFI/freebsd
+	echo "rootdev=disk0${NANO_ROOT}" > EFI/freebsd/loader.env
 
 	# We have to touch the saveenv file
 	touch uEnv.txt
