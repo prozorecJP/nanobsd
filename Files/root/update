@@ -1,6 +1,6 @@
 #!/bin/sh
 #
-# Copyright (c) 2011 iXsystems, Inc.
+# Copyright (c) 2024 prozorecJP
 # All rights reserved.
 #
 # Redistribution and use in source and binary forms, with or without
@@ -25,19 +25,93 @@
 # SUCH DAMAGE.
 #
 #
-# Script to update a NanoBSD system.
+# Script to update partition on a NanoBSD system.
 #
 # usage:
-#	ssh somewhere cat image.s1 | sh update
+#	gzip -c image.s3 | sh root@somewhere "zcat | updatep"
 #
+LOGFILE="/var/log/update$(date +%Y%m%d%H%M%S).log"
+LOCK=/var/tmp/update.lock
 
+die ()
+{
+  unlock
+  echo "$@" >&2
+  exit 1
+}
+
+lock ()
+{
+  if [ -e $LOCK ]; then
+    die "There is on-going action"
+  else
+    touch $LOCK
+  fi
+}
+
+unlock ()
+{
+  if [ -e $LOCK ]; then rm -f $LOCK; fi
+}
+
+
+(
 set -e
+set -x
+
+lock
+
+# these are logging purpose
+mount
+df
 
 . /etc/nanobsd.conf
 
-if mount | grep ${NANO_DRIVE}s1 > /dev/null ; then
-	exec sh /root/updatep2
+ACT=$(mount | egrep "^/dev/mmcsd0s[34]a on / " | cut -w -f 1 | cut -d / -f 3)
+case $ACT in
+${NANO_DRIVE}${NANO_SLICE_ROOT}a)
+  NEW="${NANO_DRIVE}${NANO_SLICE_ALTROOT}a"
+  SLICE="${NANO_SLICE_ALTROOT}a"
+  ;;
+${NANO_DRIVE}${NANO_SLICE_ALTROOT}a)
+  NEW="${NANO_DRIVE}${NANO_SLICE_ROOT}a"
+  SLICE="${NANO_SLICE_ROOT}a"
+  ;;
+*)
+  die "ACT $ACT is unknown"
+  ;;
+esac
+
+# Blow away old image
+dd if=/dev/zero of=/dev/${NEW} bs=1m count=1 > /dev/null 2>&1
+
+# Copy in new system
+dd of=/dev/${NEW} obs=64k || true
+
+# Check that it worked
+fsck_ffs -n /dev/${NEW}
+
+TMPMOUNT=/var/tmp/mnt
+mkdir -p ${TMPMOUNT}
+
+# update fstab
+mount /cfg
+if [ -e /cfg/fstab ]; then
+  sed -i "" -e "s/${ACT}/${NEW}/" /cfg/fstab
 else
-	exec sh /root/updatep1
+  mount /dev/${NEW} ${TMPMOUNT}
+  sed -i "" -e "s/${ACT}/${NEW}/" ${TMPMOUNT}/etc/fstab
+  ln -f ${TMPMOUNT}/etc/fstab ${TMPMOUNT}/conf/base/etc/fstab
+  umount /dev/${NEW}
 fi
+umount /cfg
+
+# update rootdev
+mount -t msdosfs /dev/mmcsd0s1 ${TMPMOUNT}
+sed -i "" -e "s/rootdev=.*/rootdev=disk0${SLICE}/" ${TMPMOUNT}/EFI/freebsd/loader.env
+umount /dev/mmcsd0s1
+rmdir ${TMPMOUNT}
+
+unlock
+) > $LOGFILE 2>&1
 
