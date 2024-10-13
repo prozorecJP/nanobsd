@@ -373,6 +373,22 @@ fix_pkg ( ) (
 )
 #customize_cmd fix_pkg
 
+# Install packages
+custom_install_packages () (
+	local p
+
+	if [ -n "$NANO_PACKAGE_LIST" ]; then
+		pkg -c ${NANO_WORLDDIR} update
+		for p in $NANO_PACKAGE_LIST
+		do
+			pkg -c ${NANO_WORLDDIR} install -y $p
+		done
+		pkg -c ${NANO_WORLDDIR} clean -a -y
+		chroot ${NANO_WORLDDIR} rm -rf var/db/pkg
+	fi
+)
+customize_cmd custom_install_packages
+
 save_build ( ) (
 	VERSION_FILE=${NANO_WORLDDIR}/etc/version
 	if [ "${SVNREVISION}" = "${REVISION}" ]; then
