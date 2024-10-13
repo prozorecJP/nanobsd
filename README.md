@@ -21,6 +21,7 @@ I found one post on FreeBSD forum (https://forums.freebsd.org/threads/building-a
 # Note
 typical_embedded in embedded/common configures some files, such as etc/rc.conf, boot/loader.conf. This function also sets root password as root, and timezone if NANO_TIME_ZONE is set.
 
-# Limitation
-Currently only one partition is allocated for nanobsd, no secondary partition is available for backup.
+Currently only one partition is allocated for nanobsd to minimize the image file size. Secondary partition can be created create_alt_partition script in /root.
+
+Scripts (updatep1 and updatep2) are merged into update. This script checks current active partition and updates alternate partition.
 
