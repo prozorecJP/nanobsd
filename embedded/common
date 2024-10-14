@@ -38,7 +38,6 @@
 # Missing in base:
 # o mkimg setting active partition
 # o mkimg starting at arbitrary offset (needed for A10, et al)
-# o mtools still needed because we have no makefs -t msdos
 # o nanobsd doesn't record changes to WORLDTEMP in customization
 #   scripts yet, so we have kludge to pick up all files
 # o easy way for pkg to grab files from other repos and put that
@@ -50,7 +49,6 @@
 #
 # Missing here
 # o documentation for how to run the qemu images
-# o msdos mtools fallback
 # o special boot for !x86 !arm platforms
 # o qemu image for arm
 # o qemu image for aarch64
@@ -468,10 +466,6 @@ if [ -n "$NANO_BOOT_PKG" ]; then
 	d=/usr/local/share/u-boot/${NANO_BOOT_PKG}
 	if [ ! -d ${d} ]; then
 		echo ${NANO_BOOT_PKG} not installed. Sadly, it must be.
-		exit 1
-	fi
-	if [ ! -x /usr/local/bin/mcopy ]; then
-		echo mtools not installed. Sadly, we gotta have it.
 		exit 1
 	fi
         if [ "$NANO_NAME" == rpi4 ]; then
