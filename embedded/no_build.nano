@@ -220,7 +220,13 @@ install_etc () (
 
 cust_fetch_updates ( ) (
 	if $DO_FETCH_UPDATES; then
-		freebsd-update -b ${NANO_WORLDDIR} fetch 
+		local REL
+		if [ -x ${NANO_WORLDDIR}/bin/freebsd-version ]; then
+			REL=$(${NANO_WORLDDIR}/bin/freebsd-version -u)
+		else
+			REL=$(freebsd-version -u)
+		fi
+		freebsd-update -b ${NANO_WORLDDIR} fetch --currently-running $REL
 	fi
 )
 customize_cmd cust_fetch_updates
