@@ -376,6 +376,7 @@ custom_install_packages () (
 	local p
 
 	if [ -n "$NANO_PACKAGE_LIST" ]; then
+		cp /etc/resolv.conf ${NANO_WORLDDIR}/etc
 		pkg -c ${NANO_WORLDDIR} update
 		for p in $NANO_PACKAGE_LIST
 		do
@@ -384,6 +385,7 @@ custom_install_packages () (
                 pkg -c ${NANO_WORLDDIR} query %n-%v > ${NANO_LOG}/_.pkg.list
 		pkg -c ${NANO_WORLDDIR} clean -a -y
 		chroot ${NANO_WORLDDIR} rm -rf var/db/pkg
+		rm -f ${NANO_WORLDDIR}/etc/resolv.conf
 	fi
 )
 customize_cmd custom_install_packages
