@@ -78,6 +78,8 @@ SIZE=$(gpart show ${NANO_DRIVE} | egrep "\s+3\s+freebsd\s+" | cut -w -f 3)
 gpart add -t freebsd -s ${SIZE} ${NANO_DRIVE}
 gpart create -s bsd ${NANO_DRIVE}${NANO_SLICE_ALTROOT}
 gpart add -t freebsd-ufs -a 64k -b 64k ${NANO_DRIVE}${NANO_SLICE_ALTROOT}
+INDEX=$(gpart show ${NANO_DRIVE} | egrep "\s+freebsd\s+"|tail -1|cut -w -f 4)
+gpart resize -i ${INDEX} -s ${SIZE} ${NANO_DRIVE}
 newfs -U -L altrootfs /dev/${NANO_DRIVE}${NANO_ALTROOT}
 
 unlock
