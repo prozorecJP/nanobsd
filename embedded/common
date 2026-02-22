@@ -248,6 +248,11 @@ create_diskimage_mbr ( ) (
 		dd if=/dev/${mddev}${NANO_ROOT} of=${NANO_LOG}/_.${NANO_ROOT} bs=32m
 	fi
 
+	# write u-boot loader here
+	if [ -n "${NANO_BOOT_FILE}" -a -n "${NANO_BOOT_BS}" -a -n "${NANO_BOOT_SEEK}" ]; then
+        	dd if=/usr/local/share/u-boot/${NANO_BOOT_PKG}/${NANO_BOOT_FILE} of=/dev/${mddev} bs=${NANO_BOOT_BS} seek=${NANO_BOOT_SEEK} conv=sync
+	fi
+
 	mdconfig -d -u ${mddev}
 
 	#xz -9 --keep ${out} # time consuming
@@ -414,22 +419,22 @@ customize_cmd shrink_md_fbsize
 #customize_cmd cust_comconsole
 
 dos_boot_part ( ) (
-	local d=/usr/local/share/u-boot/${NANO_BOOT_PKG}
-	local f=${NANO_FAT_DIR}
-
 	# For now, just copy all the files. However, for iMX6 and Allwinner,
 	# we'll need to put a special boot block at a fixed location
 	# on the disk as well.
+	local f=${NANO_FAT_DIR}
 	rm -rf $f
 	mkdir $f
 	chdir $f
-	cp ${d}/* .
-
-	# We have to touch the saveenv file
-	touch uEnv.txt
+	mkdir -p EFI/BOOT/
+	cp ${NANO_WORLDDIR}/boot/loader_lua.efi EFI/BOOT/bootaa64.efi
+	mkdir -p EFI/freebsd
+	echo "rootdev=disk0${NANO_ROOT}" > EFI/freebsd/loader.env
 
 	# Now we need to copy over dtb files from the build.
-	cp ${NANO_WORLDDIR}/boot/dtb/*.dtb .
+	mkdir dtb
+	cp -R ${NANO_WORLDDIR}/boot/dtb/ dtb
+        # Writing special boot block will be done later in create_diskimage_mbr
 )
 
 dos_boot_part_rpi4 ( ) (
